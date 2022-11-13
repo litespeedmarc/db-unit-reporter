@@ -101,6 +101,10 @@
 
     </dependencies>
 
+    <build>
+        <directory>${version}</directory>
+    </build>
+
 
 
 </project>
