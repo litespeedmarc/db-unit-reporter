@@ -189,7 +189,7 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
 
     private static String getBranchTag() {
         var branchName = BRANCH_NAME.toLowerCase();
-        var matcher = Pattern.compile("\b([a-z]+-\\d+)\b").matcher(branchName);
+        var matcher = Pattern.compile("\b([a-z]+-\\d+)").matcher(branchName);
         if (matcher.find()) {
             return matcher.group(1);
         } else {
