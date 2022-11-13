@@ -3,17 +3,14 @@ package com.scibrazeau.dbunitreporter;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.ImpersonatedCredentials;
 import com.google.cloud.bigquery.*;
+import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import one.util.streamex.StreamEx;
 import org.apache.commons.io.output.TeeOutputStream;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.extension.Extension;
-import org.junit.jupiter.api.extension.ExtensionContext;
-import org.junit.jupiter.api.extension.InvocationInterceptor;
-import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
+import org.junit.jupiter.api.extension.*;
 
 import java.io.*;
 import java.lang.reflect.Method;
@@ -21,41 +18,62 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.extension.ExtensionContext.Namespace.GLOBAL;
+
 @SuppressWarnings("java:S3008")
-public class BQTestInterceptor implements Extension, InvocationInterceptor {
+public class BQTestInterceptor implements Extension, BeforeAllCallback, InvocationInterceptor, ExtensionContext.Store.CloseableResource {
 
     private static final String SHORT_SHA = getFromEnvOrGit("SHORT_SHA", "git rev-parse --short HEAD");
     private static final String BRANCH_NAME = getFromEnvOrGit("BRANCH_NAME", "git rev-parse --abbrev-ref HEAD");
     private static final String BRANCH_TAG = getBranchTag(BRANCH_NAME);
 
+
     private static final String DB_NAME = getPropValue("DB_NAME", "testresults");
     private static final String TABLE_NAME = getPropValue("TABLE_NAME", "testresults");
 
-    private static String COMPUTER_NAME = getComputerName();
+    private static final String COMPUTER_NAME = getComputerName();
+    private static final Logger LOGGER = Logger.getLogger(BQTestInterceptor.class.getName());
+    private static final int INSERT_QUEUE_SIZE = 1000;
+
+    private final ArrayBlockingQueue<Map<String, Object>> messages = new ArrayBlockingQueue<>(INSERT_QUEUE_SIZE);
     private BigQuery bigQuery;
     private Table table;
+    private Thread logInserter;
+    private boolean started;
 
 
     public void lazyLoad() {
         if (this.table != null) {
             return;
         }
+        LOGGER.info("Initiating logging of test results to BigQuery");
+        if (LOGGER.isLoggable(Level.CONFIG)) {
+            LOGGER.config(String.format("branch_name=%s", BRANCH_NAME));
+            LOGGER.config(String.format("branch_tag=%s", BRANCH_TAG));
+            LOGGER.config(String.format("short_sha=%s", SHORT_SHA));
+            LOGGER.config(String.format("computer_name=%s", COMPUTER_NAME));
+            LOGGER.config(String.format("db_name=%s", DB_NAME));
+            LOGGER.config(String.format("table_name=%s", TABLE_NAME));
+        }
         var builder = BigQueryOptions.newBuilder();
-        if (!StringUtils.isEmpty(getPropValue("PROJECT_ID"))) {
-            builder.setProjectId(getPropValue("PROJECT_ID"));
+        var projectId = getPropValue("PROJECT_ID");
+        if (!StringUtils.isEmpty(projectId)) {
+            builder.setProjectId(projectId);
+            LOGGER.config(String.format("project_id=%s", projectId));
         }
         try {
             GoogleCredentials base = GoogleCredentials.getApplicationDefault();
             var toImpersonate = getPropValue("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT");
             if (!StringUtils.isEmpty(toImpersonate)) {
+                LOGGER.config(String.format("google_impersonate_service_account=%s", toImpersonate));
                 base = ImpersonatedCredentials.create(
                         base,
                         toImpersonate,
@@ -70,10 +88,56 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
             builder.setCredentials(base);
             this.bigQuery = builder.build().getService();
             this.table = createTableIfMissing();
+
+            LOGGER.fine("Started LogInserter Thread");
+            this.logInserter = new Thread(this::continuouslyInsertLogs, "logInserter");
+            this.logInserter.start();
         } catch (IOException e) {
             throw (Error) ExceptionUtils.rethrow(e);
         }
     }
+
+    private void continuouslyInsertLogs() {
+        Stopwatch sw = Stopwatch.createStarted();
+        var insertBuilder = InsertAllRequest.newBuilder(table.getTableId());
+        long numberOfTests = 0;
+        int numRows = 0;
+        while (true) {
+            Map<String, Object> next = null;
+            try {
+                next = this.messages.poll(100, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                ExceptionUtils.rethrow(e);
+            }
+            boolean finished = next != null && next.isEmpty();
+            if (next != null && !next.isEmpty()) {
+                insertBuilder.addRow(next);
+                numRows++;
+                numberOfTests++;
+            }
+            if (sw.elapsed(TimeUnit.MILLISECONDS) > 500 || finished || this.messages.size() >= INSERT_QUEUE_SIZE) {
+                if (numRows > 0) {
+                    var rowToInsert = insertBuilder.build();
+                    var response = this.bigQuery.insertAll(rowToInsert);
+                    if (response.hasErrors()) {
+                        LOGGER.warning(String.format("Failed to insert some test results into bigquery table %s.%s. See errors below.", DB_NAME, TABLE_NAME));
+                        StreamEx.of(response.getInsertErrors().values())
+                                .flatMap(Collection::stream)
+                                .map(BigQueryError::getMessage)
+                                .forEach(LOGGER::warning);
+                    }
+                    insertBuilder = InsertAllRequest.newBuilder(table.getTableId());
+                    numRows = 0;
+                    sw.reset();
+                }
+                if (finished) {
+                    break;
+                }
+            }
+        }
+        LOGGER.info(String.format("Logging to big query complete. %s tests reported", numberOfTests));
+    }
+
 
     private Table createTableIfMissing() {
         var schema =
@@ -118,11 +182,29 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         wrap(invocation, invocationContext, extensionContext, InvocationInterceptor.super::interceptTestMethod);
     }
 
+    @Override
+    public void close() throws Throwable {
+        this.messages.put(new HashMap<>());
+        this.logInserter.join();
+    }
+
+    @Override
+    public void beforeAll(ExtensionContext context) throws Exception {
+        if (!started) {
+            started = true;
+            // Your "before all tests" startup logic goes here
+            // The following line registers a callback hook when the root test context is shut down
+            context.getRoot().getStore(GLOBAL).put("wait for BQ logging to complete", this);
+        }
+
+    }
+
     private interface Wrapped {
         void accept(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable;
     }
 
     public void wrap(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, Wrapped wrapped) throws Throwable {
+        TagUtils.init();
         if (!"true".equals(getPropValue("IS_CI"))) {
             wrapped.accept(invocation, invocationContext, extensionContext);
             return;
@@ -138,7 +220,6 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         try {
             System.setOut(newOut);
             System.setErr(newErr);
-            TagUtils.init();
             wrapped.accept(invocation, invocationContext, extensionContext);
             success = true;
         } finally {
@@ -146,10 +227,11 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
             System.setErr(originalErr);
             os.close();
             logResult(invocationContext, extensionContext, startTime, success, os.toString(Charset.defaultCharset()));
+            TagUtils.remove();
         }
     }
 
-    private void logResult(ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, Instant startTime, boolean success, String stdout) {
+    private void logResult(ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, Instant startTime, boolean success, String stdout) throws InterruptedException {
         var endTime = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         startTime = startTime.truncatedTo(ChronoUnit.MILLIS);
         var method = invocationContext.getExecutable();
@@ -183,13 +265,8 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
                 .distinct()
                 .toArray(new String[]{});
         payload.put("tags", uniqueTags);
-        var rowToInsert = InsertAllRequest.newBuilder(table.getTableId()).addRow(payload).build();
-        var response = this.bigQuery.insertAll(rowToInsert);
-        if (response.hasErrors()) {
-            Assertions.fail("Failed to log results to BigQuery: " +
-                    StreamEx.of(response.getInsertErrors().values()).joining("\n")
-            );
-        }
+        this.messages.put(payload);
+
     }
 
     private String getModuleNameInternal() {
