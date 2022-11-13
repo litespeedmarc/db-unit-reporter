@@ -20,6 +20,7 @@ import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -124,7 +125,7 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         var os = new org.apache.commons.io.output.ByteArrayOutputStream();
         var newOut = new PrintStream(new TeeOutputStream(originalOut, os));
         var newErr = new PrintStream(new TeeOutputStream(originalErr, os));
-        LocalDateTime startTime = LocalDateTime.now();
+        var startTime = Instant.now();
         boolean success = false;
         try {
             System.setOut(newOut);
@@ -140,8 +141,8 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         }
     }
 
-    private void logResult(ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, LocalDateTime startTime, boolean success, String stdout) {
-        LocalDateTime endTime = LocalDateTime.now().truncatedTo(ChronoUnit.MILLIS);
+    private void logResult(ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, Instant startTime, boolean success, String stdout) {
+        var endTime = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         startTime = startTime.truncatedTo(ChronoUnit.MILLIS);
         var method = invocationContext.getExecutable();
         String methodName = method.getName();
@@ -159,8 +160,8 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         payload.put("class_name", method.getDeclaringClass().getSimpleName());
         payload.put("method_name", methodName);
         payload.put("method_desc", methodDesc);
-        payload.put("start_time", startTime.format(DateTimeFormatter.ISO_DATE_TIME));
-        payload.put("end_time", endTime.format(DateTimeFormatter.ISO_DATE_TIME));
+        payload.put("start_time", StringUtils.chop(startTime.toString()));
+        payload.put("end_time", StringUtils.chop(endTime.toString()));
         payload.put("duration", ChronoUnit.MILLIS.between(startTime, endTime));
         payload.put("stdout", stdout);
         payload.put("success", success);
