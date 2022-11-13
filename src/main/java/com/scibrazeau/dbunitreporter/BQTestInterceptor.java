@@ -35,8 +35,8 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
     private static final String BRANCH_NAME = getFromEnvOrGit("BRANCH_NAME", "git rev-parse --abbrev-ref HEAD");
     private static final String BRANCH_TAG = getBranchTag();
 
-    private static final String DB_NAME = getPropValue("DBTI_DB_NAME", "testresults");
-    private static final String TABLE_NAME = getPropValue("DBTI_TABLE_NAME", "testresults");
+    private static final String DB_NAME = getPropValue("DB_NAME", "testresults");
+    private static final String TABLE_NAME = getPropValue("TABLE_NAME", "testresults");
 
     private static String COMPUTER_NAME = getComputerName();
     private final BigQuery bigQuery;
@@ -217,15 +217,14 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         return getPropValue(env, null);
     }
     private static String getPropValue(String env, String defaultValue) {
-        var sysProp = System.getProperty(env);
-        if (!Strings.isNullOrEmpty(sysProp)) {
-            return sysProp;
-        }
-        sysProp = System.getenv(env);
-        if (!Strings.isNullOrEmpty(sysProp)) {
-            return sysProp;
-        }
-        return defaultValue;
+        return StreamEx.of(
+                System.getProperty("dbunitreporter_" + env),
+                System.getenv("dbunitreporter_" + env),
+                System.getProperty(env),
+                System.getenv(env)
+        ).filter(StringUtils::isNotEmpty)
+         .findFirst()
+         .orElse(defaultValue);
     }
 
     private static String getComputerName()
