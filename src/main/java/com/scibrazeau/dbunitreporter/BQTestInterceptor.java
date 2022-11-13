@@ -33,7 +33,7 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
 
     private static final String SHORT_SHA = getFromEnvOrGit("SHORT_SHA", "git rev-parse --short HEAD");
     private static final String BRANCH_NAME = getFromEnvOrGit("BRANCH_NAME", "git rev-parse --abbrev-ref HEAD");
-    private static final String BRANCH_TAG = getBranchTag();
+    private static final String BRANCH_TAG = getBranchTag(BRANCH_NAME);
 
     private static final String DB_NAME = getPropValue("DB_NAME", "testresults");
     private static final String TABLE_NAME = getPropValue("TABLE_NAME", "testresults");
@@ -187,9 +187,9 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
         return new File(".").getAbsoluteFile().getParentFile().getName();
     }
 
-    private static String getBranchTag() {
-        var branchName = BRANCH_NAME.toLowerCase();
-        var matcher = Pattern.compile("\b([a-z]+-\\d+)").matcher(branchName);
+    /* package */ static String getBranchTag(String name) {
+        var branchName = name.toLowerCase();
+        var matcher = Pattern.compile("([a-z]+-\\d+)").matcher(branchName);
         if (matcher.find()) {
             return matcher.group(1);
         } else {
