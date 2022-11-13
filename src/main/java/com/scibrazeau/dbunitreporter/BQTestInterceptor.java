@@ -40,11 +40,14 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
     private static final String TABLE_NAME = getPropValue("TABLE_NAME", "testresults");
 
     private static String COMPUTER_NAME = getComputerName();
-    private final BigQuery bigQuery;
-    private final Table table;
+    private BigQuery bigQuery;
+    private Table table;
 
 
-    public BQTestInterceptor() {
+    public void lazyLoad() {
+        if (this.table != null) {
+            return;
+        }
         var builder = BigQueryOptions.newBuilder();
         if (!StringUtils.isEmpty(getPropValue("PROJECT_ID"))) {
             builder.setProjectId(getPropValue("PROJECT_ID"));
@@ -120,6 +123,11 @@ public class BQTestInterceptor implements Extension, InvocationInterceptor {
     }
 
     public void wrap(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, Wrapped wrapped) throws Throwable {
+        if (!"true".equals(getPropValue("IS_CI"))) {
+            wrapped.accept(invocation, invocationContext, extensionContext);
+            return;
+        }
+        lazyLoad();
         var originalOut = System.out;
         var originalErr = System.out;
         var os = new org.apache.commons.io.output.ByteArrayOutputStream();
