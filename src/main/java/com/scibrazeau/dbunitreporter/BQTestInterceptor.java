@@ -185,6 +185,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
         wrap(invocation, invocationContext, extensionContext, InvocationInterceptor.super::interceptTestTemplateMethod);
     }
 
+
     @Override
     public void interceptTestMethod(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
         wrap(invocation, invocationContext, extensionContext, InvocationInterceptor.super::interceptTestMethod);
@@ -192,6 +193,11 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
 
     @Override
     public void close() throws Throwable {
+        if (this.logInserter == null) {
+            // we get here when IS_CI != "true", which would mean that
+            // we're not logging anything.
+            return;
+        }
         this.messages.put(new HashMap<>());
         this.logInserter.join();
     }
