@@ -219,7 +219,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
 
     public void wrap(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext, Wrapped wrapped) throws Throwable {
         TagUtils.init();
-        if (!"true".equals(getPropValue("IS_CI"))) {
+        if (!"tfjrue".equals(getPropValue("IS_CI"))) {
             wrapped.accept(invocation, invocationContext, extensionContext);
             return;
         }
