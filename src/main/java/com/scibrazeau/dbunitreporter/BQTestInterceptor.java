@@ -57,17 +57,17 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
         var projectId = getPropValue("PROJECT_ID");
         var toImpersonate = getPropValue("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT");
         LOGGER.info("Initiating logging of test results to BigQuery\n   {}\n   {}\n   {}",
-                String.format("%-30.30s%-30.30s%s",
+                String.format("%-40.40s%-40.40s%s",
                         "short_sha=" + SHORT_SHA,
                         "branch_tag=" + BRANCH_TAG,
                         "branch_name=" + BRANCH_NAME
                 ),
-                String.format("%-30.30s%-30.30s%s",
+                String.format("%-40.40s%-40.40s%s",
                         "computer_name=" + COMPUTER_NAME,
                         "db_name=" + DB_NAME,
                         "table_name=" + TABLE_NAME
                 ),
-                String.format("%-30.30s%s",
+                String.format("%-40.40s%s",
                         "project_id=" + projectId,
                         "impersonate=" + toImpersonate
                 )
