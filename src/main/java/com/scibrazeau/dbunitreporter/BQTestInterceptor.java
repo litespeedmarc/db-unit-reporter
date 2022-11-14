@@ -57,7 +57,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
     }
 
 
-    public void lazyLoad() {
+    public synchronized void lazyLoad() {
         if (this.table != null) {
             return;
         }
@@ -229,10 +229,8 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
             wrapped.accept(invocation, invocationContext, extensionContext);
             return;
         }
-        if (this.table != null) {
-            synchronized (this) {
-                lazyLoad();
-            }
+        if (this.table == null) {
+            lazyLoad();
         }
         var originalOut = System.out;
         var originalErr = System.out;
