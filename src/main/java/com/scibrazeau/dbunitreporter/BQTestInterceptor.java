@@ -50,6 +50,12 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
     private Thread logInserter;
     private boolean started;
 
+    static {
+        if (!"true".equals(getPropValue("IS_CI"))) {
+            LOGGER.warn("You are using db-unit-reporter plugin, yet IS_CI != true.  If you wish to have results logged to BigQuery.  Please set this variable.");
+        }
+    }
+
 
     public void lazyLoad() {
         if (this.table != null) {
