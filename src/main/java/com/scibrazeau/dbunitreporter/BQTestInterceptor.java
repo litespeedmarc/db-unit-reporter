@@ -40,6 +40,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
     private static final String TABLE_NAME = getPropValue("TABLE_NAME", "testresults");
 
     private static final String COMPUTER_NAME = getComputerName();
+    private static final String MODULE_NAME = getModuleNameInternal();
     private static final Logger LOGGER = LogManager.getLogger(BQTestInterceptor.class);
     private static final int INSERT_QUEUE_SIZE = 1000;
 
@@ -67,7 +68,8 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
                         "db_name=" + DB_NAME,
                         "table_name=" + TABLE_NAME
                 ),
-                String.format("%-40.40s%s",
+                String.format("%-40.40s%-40.40s%s",
+                        "module_name=" + MODULE_NAME,
                         "project_id=" + projectId,
                         "impersonate=" + toImpersonate
                 )
@@ -253,7 +255,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
         payload.put("branch_tag", BRANCH_TAG);
         payload.put("short_sha", SHORT_SHA);
         payload.put("computer_name", COMPUTER_NAME);
-        payload.put("module_name", getModuleNameInternal());
+        payload.put("module_name", MODULE_NAME);
         payload.put("package_name", method.getDeclaringClass().getPackageName());
         payload.put("class_name", method.getDeclaringClass().getSimpleName());
         payload.put("method_name", methodName);
@@ -277,7 +279,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
 
     }
 
-    private String getModuleNameInternal() {
+    private static String getModuleNameInternal() {
         return new File(".").getAbsoluteFile().getParentFile().getName();
     }
 
