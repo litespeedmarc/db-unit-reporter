@@ -223,8 +223,10 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
             wrapped.accept(invocation, invocationContext, extensionContext);
             return;
         }
-        synchronized (this) {
-            lazyLoad();
+        if (this.table != null) {
+            synchronized (this) {
+                lazyLoad();
+            }
         }
         var originalOut = System.out;
         var originalErr = System.out;
