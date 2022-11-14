@@ -10,6 +10,8 @@ import one.util.streamex.StreamEx;
 import org.apache.commons.io.output.TeeOutputStream;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.extension.*;
 
 import java.io.*;
@@ -22,8 +24,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.extension.ExtensionContext.Namespace.GLOBAL;
@@ -40,7 +40,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
     private static final String TABLE_NAME = getPropValue("TABLE_NAME", "testresults");
 
     private static final String COMPUTER_NAME = getComputerName();
-    private static final Logger LOGGER = Logger.getLogger(BQTestInterceptor.class.getName());
+    private static final Logger LOGGER = LogManager.getLogger(BQTestInterceptor.class);
     private static final int INSERT_QUEUE_SIZE = 1000;
 
     private final ArrayBlockingQueue<Map<String, Object>> messages = new ArrayBlockingQueue<>(INSERT_QUEUE_SIZE);
@@ -54,26 +54,32 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
         if (this.table != null) {
             return;
         }
-        LOGGER.info("Initiating logging of test results to BigQuery");
-        if (LOGGER.isLoggable(Level.CONFIG)) {
-            LOGGER.config(String.format("branch_name=%s", BRANCH_NAME));
-            LOGGER.config(String.format("branch_tag=%s", BRANCH_TAG));
-            LOGGER.config(String.format("short_sha=%s", SHORT_SHA));
-            LOGGER.config(String.format("computer_name=%s", COMPUTER_NAME));
-            LOGGER.config(String.format("db_name=%s", DB_NAME));
-            LOGGER.config(String.format("table_name=%s", TABLE_NAME));
-        }
-        var builder = BigQueryOptions.newBuilder();
         var projectId = getPropValue("PROJECT_ID");
+        var toImpersonate = getPropValue("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT");
+        LOGGER.info("Initiating logging of test results to BigQuery\n   {}\n   {}\n   {}",
+                String.format("%-30.30s%-30.30s%s",
+                        "short_sha=" + SHORT_SHA,
+                        "branch_tag=" + BRANCH_TAG,
+                        "branch_name=" + BRANCH_NAME
+                ),
+                String.format("%-30.30s%-30.30s%s",
+                        "computer_name=" + COMPUTER_NAME,
+                        "db_name=" + DB_NAME,
+                        "table_name=" + TABLE_NAME
+                ),
+                String.format("%-30.30s%s",
+                        "project_id=" + projectId,
+                        "impersonate=" + toImpersonate
+                )
+        );
+        var builder = BigQueryOptions.newBuilder();
         if (!StringUtils.isEmpty(projectId)) {
             builder.setProjectId(projectId);
-            LOGGER.config(String.format("project_id=%s", projectId));
         }
         try {
             GoogleCredentials base = GoogleCredentials.getApplicationDefault();
-            var toImpersonate = getPropValue("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT");
             if (!StringUtils.isEmpty(toImpersonate)) {
-                LOGGER.config(String.format("google_impersonate_service_account=%s", toImpersonate));
+                LOGGER.debug("google_impersonate_service_account={}", toImpersonate);
                 base = ImpersonatedCredentials.create(
                         base,
                         toImpersonate,
@@ -89,7 +95,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
             this.bigQuery = builder.build().getService();
             this.table = createTableIfMissing();
 
-            LOGGER.fine("Started LogInserter Thread");
+            LOGGER.trace("Started LogInserter Thread");
             this.logInserter = new Thread(this::continuouslyInsertLogs, "logInserter");
             this.logInserter.start();
         } catch (IOException e) {
@@ -120,11 +126,11 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
                     var rowToInsert = insertBuilder.build();
                     var response = this.bigQuery.insertAll(rowToInsert);
                     if (response.hasErrors()) {
-                        LOGGER.warning(String.format("Failed to insert some test results into bigquery table %s.%s. See errors below.", DB_NAME, TABLE_NAME));
+                        LOGGER.warn("Failed to insert some test results into bigquery table {}.{}. See errors below.", DB_NAME, TABLE_NAME);
                         StreamEx.of(response.getInsertErrors().values())
                                 .flatMap(Collection::stream)
                                 .map(BigQueryError::getMessage)
-                                .forEach(LOGGER::warning);
+                                .forEach(LOGGER::warn);
                     }
                     insertBuilder = InsertAllRequest.newBuilder(table.getTableId());
                     numRows = 0;
@@ -135,7 +141,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
                 }
             }
         }
-        LOGGER.info(String.format("Logging to big query complete. %s tests reported", numberOfTests));
+        LOGGER.info("Logging to big query complete. {} tests reported", numberOfTests);
     }
 
 
@@ -189,7 +195,7 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
     }
 
     @Override
-    public void beforeAll(ExtensionContext context) throws Exception {
+    public void beforeAll(ExtensionContext context) {
         if (!started) {
             started = true;
             // Your "before all tests" startup logic goes here
@@ -209,7 +215,9 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
             wrapped.accept(invocation, invocationContext, extensionContext);
             return;
         }
-        lazyLoad();
+        synchronized (this) {
+            lazyLoad();
+        }
         var originalOut = System.out;
         var originalErr = System.out;
         var os = new org.apache.commons.io.output.ByteArrayOutputStream();
