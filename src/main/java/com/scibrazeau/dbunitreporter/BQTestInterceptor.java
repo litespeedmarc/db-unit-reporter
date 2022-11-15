@@ -172,6 +172,9 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
                         Field.of("success", StandardSQLTypeName.BOOL),
                         Field.newBuilder("tags", StandardSQLTypeName.STRING)
                                 .setMode(Field.Mode.REPEATED)
+                                .build(),
+                        Field.newBuilder("create_user", StandardSQLTypeName.STRING)
+                                .setDefaultValueExpression("SESSION_USER()")
                                 .build()
                 );
         var tableId = TableId.of(DB_NAME, TABLE_NAME);
@@ -181,8 +184,8 @@ public class BQTestInterceptor implements Extension, BeforeAllCallback, Invocati
             var tableInfo = TableInfo.newBuilder(tableId, tableDefinition).build();
             return bigQuery.create(tableInfo);
         } else {
-            existingTable.toBuilder().setDefinition(tableDefinition).build();
-            return existingTable.update();
+            new SchemaUpdates(this.bigQuery, DB_NAME, TABLE_NAME).synchSchema(schema);
+            return bigQuery.getTable(DB_NAME, TABLE_NAME);
         }
     }
 
